@@ -1,25 +1,32 @@
 package com.cardiffmet.scms.ui.staff;
 
+import com.cardiffmet.scms.command.CancelBookingCommand;
 import com.cardiffmet.scms.model.Announcement;
 import com.cardiffmet.scms.model.Booking;
 import com.cardiffmet.scms.model.BookingStatus;
 import com.cardiffmet.scms.model.Room;
 import com.cardiffmet.scms.model.Session;
+import com.cardiffmet.scms.model.Urgency;
+import com.cardiffmet.scms.service.BookingSeriesResult;
 import com.cardiffmet.scms.service.CampusRepository;
+import com.cardiffmet.scms.ui.common.UserAlertsPanel;
 import com.cardiffmet.scms.ui.util.DateOptions;
 import com.cardiffmet.scms.ui.util.TimeSlots;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
+import javax.swing.JSpinner;
 import javax.swing.JTabbedPane;
 import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
+import javax.swing.SpinnerNumberModel;
 import javax.swing.table.DefaultTableModel;
 import java.awt.BorderLayout;
 import java.awt.FlowLayout;
@@ -46,6 +53,8 @@ public class StaffDashboardPanel extends JPanel {
     private JComboBox<LocalTime> startCombo;
     private JComboBox<LocalTime> endCombo;
     private JTextField purposeField;
+    private JCheckBox weeklyRepeat;
+    private JSpinner weekCountSpinner;
 
     public StaffDashboardPanel(CampusRepository campus, Session session) {
         super(new BorderLayout());
@@ -73,7 +82,8 @@ public class StaffDashboardPanel extends JPanel {
         tabs.addTab("Book a room", buildBookingTab());
         tabs.addTab("My bookings", buildMyBookingsTab());
         tabs.addTab("Report maintenance", buildMaintenanceTab());
-        tabs.addTab("Notifications", buildNotificationsTab(annTable));
+        tabs.addTab("Announcements", buildAnnouncementsTab(annTable));
+        tabs.addTab("Alerts", new UserAlertsPanel(campus, session));
 
         add(tabs, BorderLayout.CENTER);
 
@@ -85,8 +95,8 @@ public class StaffDashboardPanel extends JPanel {
         JPanel wrap = new JPanel(new BorderLayout(8, 8));
         wrap.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
 
-        List<Room> rooms = campus.getRooms();
-        roomCombo = new JComboBox<>(rooms.toArray(Room[]::new));
+        roomCombo = new JComboBox<>();
+        reloadRoomCombo();
 
         List<LocalDate> days = DateOptions.upcomingDays(60);
         dateCombo = new JComboBox<>(days.toArray(LocalDate[]::new));
@@ -98,11 +108,17 @@ public class StaffDashboardPanel extends JPanel {
 
         purposeField = new JTextField(32);
 
+        weeklyRepeat = new JCheckBox("Weekly recurrence (same weekday & time)");
+        weekCountSpinner = new JSpinner(new SpinnerNumberModel(8, 1, 52, 1));
+
+        JButton reloadRooms = new JButton("Reload room list");
+        reloadRooms.addActionListener(e -> reloadRoomCombo());
+
         JButton book = new JButton("Confirm booking");
         book.addActionListener(e -> confirmStaffBooking());
 
         JPanel form = new JPanel(new GridLayout(0, 1, 8, 8));
-        form.add(labelRow("Room", roomCombo));
+        form.add(labelRow("Room (active only)", roomCombo));
         form.add(labelRow("Date", dateCombo));
         form.add(labelRow("Start", startCombo));
         form.add(labelRow("End", endCombo));
@@ -110,10 +126,18 @@ public class StaffDashboardPanel extends JPanel {
         pRow.add(new JLabel("Purpose"), BorderLayout.WEST);
         pRow.add(purposeField, BorderLayout.CENTER);
         form.add(pRow);
+
+        JPanel recur = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        recur.add(weeklyRepeat);
+        recur.add(new JLabel("Weeks:"));
+        recur.add(weekCountSpinner);
+        form.add(recur);
+
+        form.add(reloadRooms);
         form.add(book);
 
-        JLabel note = new JLabel("<html>Staff bookings are recorded as <b>Approved</b> immediately "
-                + "(subject to no clash with existing approved bookings).</html>");
+        JLabel note = new JLabel("<html>Staff bookings are <b>Approved</b> immediately if the slot is free "
+                + "(double-booking blocked). Optional weekly series creates one booking per week.</html>");
         note.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
 
         JPanel north = new JPanel(new BorderLayout());
@@ -121,6 +145,22 @@ public class StaffDashboardPanel extends JPanel {
         north.add(form, BorderLayout.CENTER);
         wrap.add(north, BorderLayout.NORTH);
         return wrap;
+    }
+
+    private void reloadRoomCombo() {
+        Room sel = (Room) roomCombo.getSelectedItem();
+        roomCombo.removeAllItems();
+        for (Room r : campus.getActiveRooms()) {
+            roomCombo.addItem(r);
+        }
+        if (sel != null) {
+            for (int i = 0; i < roomCombo.getItemCount(); i++) {
+                if (roomCombo.getItemAt(i).getId().equals(sel.getId())) {
+                    roomCombo.setSelectedIndex(i);
+                    return;
+                }
+            }
+        }
     }
 
     private static JPanel labelRow(String title, JComboBox<?> combo) {
@@ -136,6 +176,8 @@ public class StaffDashboardPanel extends JPanel {
         LocalTime start = (LocalTime) startCombo.getSelectedItem();
         LocalTime end = (LocalTime) endCombo.getSelectedItem();
         if (room == null || date == null || start == null || end == null) {
+            JOptionPane.showMessageDialog(this, "Choose a room, date, and times.", "Booking",
+                    JOptionPane.WARNING_MESSAGE);
             return;
         }
         if (!start.isBefore(end)) {
@@ -150,13 +192,21 @@ public class StaffDashboardPanel extends JPanel {
             return;
         }
         try {
-            campus.addBooking(room.getId(), session.getUsername(), date, start, end, purpose,
-                    BookingStatus.APPROVED);
-            JOptionPane.showMessageDialog(this, "Booking confirmed.", "Booking",
-                    JOptionPane.INFORMATION_MESSAGE);
+            if (weeklyRepeat.isSelected()) {
+                int weeks = (Integer) weekCountSpinner.getValue();
+                BookingSeriesResult res = campus.addWeeklyBookingSeries(room.getId(), session.getUsername(),
+                        date, start, end, purpose, BookingStatus.APPROVED, weeks);
+                JOptionPane.showMessageDialog(this, res.summary(), "Recurring booking",
+                        JOptionPane.INFORMATION_MESSAGE);
+            } else {
+                campus.addBooking(room.getId(), session.getUsername(), date, start, end, purpose,
+                        BookingStatus.APPROVED);
+                JOptionPane.showMessageDialog(this, "Booking confirmed.", "Booking",
+                        JOptionPane.INFORMATION_MESSAGE);
+            }
             purposeField.setText("");
             refreshMyBookings();
-        } catch (IllegalStateException ex) {
+        } catch (IllegalStateException | IllegalArgumentException ex) {
             JOptionPane.showMessageDialog(this, ex.getMessage(), "Booking", JOptionPane.ERROR_MESSAGE);
         }
     }
@@ -165,12 +215,31 @@ public class StaffDashboardPanel extends JPanel {
         JPanel wrap = new JPanel(new BorderLayout(8, 8));
         wrap.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
         JButton refresh = new JButton("Refresh");
+        JButton cancel = new JButton("Cancel selected booking");
         refresh.addActionListener(e -> refreshMyBookings());
+        cancel.addActionListener(e -> cancelSelectedBooking());
         JPanel south = new JPanel(new FlowLayout(FlowLayout.LEFT));
         south.add(refresh);
+        south.add(cancel);
         wrap.add(new JScrollPane(myBookingsTable), BorderLayout.CENTER);
         wrap.add(south, BorderLayout.SOUTH);
         return wrap;
+    }
+
+    private void cancelSelectedBooking() {
+        int row = myBookingsTable.getSelectedRow();
+        if (row < 0) {
+            JOptionPane.showMessageDialog(this, "Select one of your bookings.", "Cancel",
+                    JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        long id = Long.parseLong(String.valueOf(myBookingsModel.getValueAt(row, 0)));
+        try {
+            new CancelBookingCommand(campus, id, session.getUsername()).execute();
+            refreshMyBookings();
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Cancel", JOptionPane.ERROR_MESSAGE);
+        }
     }
 
     private void refreshMyBookings() {
@@ -194,6 +263,12 @@ public class StaffDashboardPanel extends JPanel {
         JPanel wrap = new JPanel(new BorderLayout(8, 8));
         wrap.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
 
+        JComboBox<Room> roomField = new JComboBox<>();
+        for (Room r : campus.getActiveRooms()) {
+            roomField.addItem(r);
+        }
+        JComboBox<Urgency> urgency = new JComboBox<>(Urgency.values());
+
         JTextField title = new JTextField(36);
         JTextArea desc = new JTextArea(6, 36);
         desc.setLineWrap(true);
@@ -201,14 +276,16 @@ public class StaffDashboardPanel extends JPanel {
 
         JButton submit = new JButton("Submit maintenance issue");
         submit.addActionListener(e -> {
+            Room room = (Room) roomField.getSelectedItem();
             String t = title.getText().trim();
             String d = desc.getText().trim();
-            if (t.isEmpty() || d.isEmpty()) {
-                JOptionPane.showMessageDialog(this, "Please enter a title and description.", "Maintenance",
-                        JOptionPane.WARNING_MESSAGE);
+            Urgency u = (Urgency) urgency.getSelectedItem();
+            if (room == null || u == null || t.isEmpty() || d.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "Room, urgency, title, and description are required.",
+                        "Maintenance", JOptionPane.WARNING_MESSAGE);
                 return;
             }
-            campus.addMaintenance(t, d, session.getUsername());
+            campus.addMaintenance(room.getId(), t, d, u, session.getUsername());
             title.setText("");
             desc.setText("");
             JOptionPane.showMessageDialog(this, "Maintenance issue logged.", "Maintenance",
@@ -216,6 +293,8 @@ public class StaffDashboardPanel extends JPanel {
         });
 
         JPanel form = new JPanel(new GridLayout(0, 1, 8, 8));
+        form.add(labelRow("Room", roomField));
+        form.add(labelRow("Urgency", urgency));
         form.add(labelledField("Short title", title));
         form.add(new JLabel("Description"));
         form.add(new JScrollPane(desc));
@@ -232,10 +311,10 @@ public class StaffDashboardPanel extends JPanel {
         return p;
     }
 
-    private JPanel buildNotificationsTab(JTable annTable) {
+    private JPanel buildAnnouncementsTab(JTable annTable) {
         JPanel wrap = new JPanel(new BorderLayout(8, 8));
         wrap.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
-        JLabel info = new JLabel("Campus announcements (most recent first).");
+        JLabel info = new JLabel("Official campus announcements (most recent first).");
         wrap.add(info, BorderLayout.NORTH);
         wrap.add(new JScrollPane(annTable), BorderLayout.CENTER);
         JButton refresh = new JButton("Refresh");

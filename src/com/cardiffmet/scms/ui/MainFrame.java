@@ -1,8 +1,7 @@
 package com.cardiffmet.scms.ui;
 
-import com.cardiffmet.scms.auth.UserDirectory;
+import com.cardiffmet.scms.facade.CampusServicesFacade;
 import com.cardiffmet.scms.model.Session;
-import com.cardiffmet.scms.service.CampusRepository;
 import com.cardiffmet.scms.ui.admin.AdminDashboardPanel;
 import com.cardiffmet.scms.ui.staff.StaffDashboardPanel;
 import com.cardiffmet.scms.ui.student.StudentDashboardPanel;
@@ -23,7 +22,7 @@ import java.awt.FlowLayout;
  */
 public class MainFrame extends JFrame {
 
-    public MainFrame(CampusRepository campus, UserDirectory users, Session session,
+    public MainFrame(CampusServicesFacade services, Session session,
                      Runnable onLogout) {
         super("SCMS — " + session.getDisplayName());
         setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
@@ -41,9 +40,9 @@ public class MainFrame extends JFrame {
         north.add(logout);
 
         JPanel center = switch (session.getRole()) {
-            case ADMINISTRATOR -> new AdminDashboardPanel(campus, users, session);
-            case STAFF_MEMBER -> new StaffDashboardPanel(campus, session);
-            case STUDENT -> new StudentDashboardPanel(campus, session);
+            case ADMINISTRATOR -> new AdminDashboardPanel(services.campus(), services.users(), session);
+            case STAFF_MEMBER -> new StaffDashboardPanel(services.campus(), session);
+            case STUDENT -> new StudentDashboardPanel(services.campus(), session);
         };
 
         add(north, BorderLayout.NORTH);
