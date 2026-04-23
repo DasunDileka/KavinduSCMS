@@ -1,14 +1,14 @@
 package com.cardiffmet.scms.model;
 
-public enum BookingStatus {
-    PENDING("Pending"),
-    APPROVED("Approved"),
-    DECLINED("Declined"),
-    CANCELLED("Cancelled");
+public enum Urgency {
+    LOW("Low"),
+    NORMAL("Normal"),
+    HIGH("High"),
+    CRITICAL("Critical");
 
     private final String label;
 
-    BookingStatus(String label) {
+    Urgency(String label) {
         this.label = label;
     }
 

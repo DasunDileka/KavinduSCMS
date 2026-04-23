@@ -11,6 +11,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * In-memory user accounts for the prototype (plain passwords — not for production).
@@ -68,6 +69,15 @@ public final class UserDirectory {
 
     public List<UserAccount> listAccounts() {
         return Collections.unmodifiableList(new ArrayList<>(byUsername.values()));
+    }
+
+    /** Usernames with the given role (lower-case login names). */
+    public List<String> listUsernamesWithRole(UserRole role) {
+        Objects.requireNonNull(role);
+        return byUsername.values().stream()
+                .filter(a -> a.getRole() == role)
+                .map(UserAccount::getUsername)
+                .collect(Collectors.toList());
     }
 
     /**

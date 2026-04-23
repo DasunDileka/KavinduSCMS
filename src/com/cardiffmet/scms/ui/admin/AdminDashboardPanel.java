@@ -8,9 +8,11 @@ import com.cardiffmet.scms.model.MaintenanceRequest;
 import com.cardiffmet.scms.model.MaintenanceStatus;
 import com.cardiffmet.scms.model.Room;
 import com.cardiffmet.scms.model.Session;
+import com.cardiffmet.scms.command.SetBookingStatusCommand;
 import com.cardiffmet.scms.model.UserAccount;
 import com.cardiffmet.scms.model.UserRole;
 import com.cardiffmet.scms.service.CampusRepository;
+import com.cardiffmet.scms.ui.common.UserAlertsPanel;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
@@ -58,7 +60,7 @@ public class AdminDashboardPanel extends JPanel {
         this.users = users;
         this.session = session;
 
-        roomsModel = new DefaultTableModel(new String[]{"Room ID", "Name", "Building", "Capacity", "Equipment"}, 0) {
+        roomsModel = new DefaultTableModel(new String[]{"Room ID", "Name", "Building", "Capacity", "Equipment", "Active"}, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
                 return false;
@@ -75,7 +77,7 @@ public class AdminDashboardPanel extends JPanel {
         usersTable = new JTable(usersModel);
 
         maintenanceModel = new DefaultTableModel(
-                new String[]{"ID", "Title", "Reported by", "Status", "Created"}, 0) {
+                new String[]{"ID", "Room", "Title", "Urgency", "Reported by", "Assigned", "Status", "Created"}, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
                 return false;
@@ -106,6 +108,7 @@ public class AdminDashboardPanel extends JPanel {
         tabs.addTab("Maintenance", buildMaintenanceTab());
         tabs.addTab("Booking requests", buildBookingsTab());
         tabs.addTab("Announcements", buildAnnouncementsTab(annTable));
+        tabs.addTab("Alerts", new UserAlertsPanel(campus, session));
 
         add(tabs, BorderLayout.CENTER);
 
@@ -121,19 +124,69 @@ public class AdminDashboardPanel extends JPanel {
         wrap.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
 
         JLabel info = new JLabel(
-                "Five campus rooms are pre-loaded (hard-coded seed). Administrators can edit details.");
+                "<html>Rooms include five seeded spaces plus any you add (generated IDs). "
+                        + "<b>Deactivate</b> hides a room from booking lists.</html>");
         info.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
 
-        JButton edit = new JButton("Edit selected room…");
+        JButton addBtn = new JButton("Add room…");
+        JButton edit = new JButton("Edit selected…");
+        JButton deactivate = new JButton("Deactivate selected");
+        JButton activate = new JButton("Activate selected");
+        addBtn.addActionListener(e -> addNewRoom());
         edit.addActionListener(e -> editSelectedRoom());
+        deactivate.addActionListener(e -> setSelectedRoomActive(false));
+        activate.addActionListener(e -> setSelectedRoomActive(true));
 
         JPanel south = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        south.add(addBtn);
         south.add(edit);
+        south.add(deactivate);
+        south.add(activate);
 
         wrap.add(info, BorderLayout.NORTH);
         wrap.add(new JScrollPane(roomsTable), BorderLayout.CENTER);
         wrap.add(south, BorderLayout.SOUTH);
         return wrap;
+    }
+
+    private void addNewRoom() {
+        JTextField name = new JTextField(24);
+        JTextField building = new JTextField(24);
+        JTextField capacity = new JTextField("20", 8);
+        JTextField equip = new JTextField(32);
+        JPanel form = new JPanel(new GridLayout(0, 1, 6, 6));
+        form.add(labelled("Name", name));
+        form.add(labelled("Building", building));
+        form.add(labelled("Capacity", capacity));
+        form.add(labelled("Equipment / notes", equip));
+
+        int ok = JOptionPane.showConfirmDialog(this, form, "Add room", JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.PLAIN_MESSAGE);
+        if (ok != JOptionPane.OK_OPTION) {
+            return;
+        }
+        try {
+            int cap = Integer.parseInt(capacity.getText().trim());
+            if (cap <= 0) {
+                throw new NumberFormatException();
+            }
+            campus.addRoom(name.getText().trim(), building.getText().trim(), cap, equip.getText().trim());
+            refreshRooms();
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "Capacity must be a positive integer.", "Rooms",
+                    JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void setSelectedRoomActive(boolean active) {
+        int row = roomsTable.getSelectedRow();
+        if (row < 0) {
+            JOptionPane.showMessageDialog(this, "Select a room first.", "Rooms", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        String roomId = String.valueOf(roomsModel.getValueAt(row, 0));
+        campus.setRoomActive(roomId, active);
+        refreshRooms();
     }
 
     private void editSelectedRoom() {
@@ -272,7 +325,28 @@ public class AdminDashboardPanel extends JPanel {
         JPanel wrap = new JPanel(new BorderLayout(8, 8));
         wrap.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
 
+        JTextField assignField = new JTextField(24);
         JComboBox<MaintenanceStatus> status = new JComboBox<>(MaintenanceStatus.values());
+
+        JButton assignBtn = new JButton("Assign selected");
+        assignBtn.addActionListener(e -> {
+            int row = maintenanceTable.getSelectedRow();
+            if (row < 0) {
+                JOptionPane.showMessageDialog(this, "Select a request.", "Maintenance",
+                        JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            long id = Long.parseLong(String.valueOf(maintenanceModel.getValueAt(row, 0)));
+            String assignee = assignField.getText().trim();
+            try {
+                campus.assignMaintenance(id, assignee);
+                assignField.setText("");
+                refreshMaintenance();
+            } catch (Exception ex) {
+                JOptionPane.showMessageDialog(this, ex.getMessage(), "Maintenance", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+
         JButton apply = new JButton("Set status for selected");
         apply.addActionListener(e -> {
             int row = maintenanceTable.getSelectedRow();
@@ -291,11 +365,24 @@ public class AdminDashboardPanel extends JPanel {
             }
         });
 
-        JPanel south = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        south.add(new JLabel("New status:"));
-        south.add(status);
-        south.add(apply);
+        JPanel south = new JPanel(new GridLayout(2, 1, 6, 6));
+        JPanel row1 = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        row1.add(new JLabel("Assign to (team / person):"));
+        row1.add(assignField);
+        row1.add(assignBtn);
+        JPanel row2 = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        row2.add(new JLabel("Status:"));
+        row2.add(status);
+        row2.add(apply);
+        south.add(row1);
+        south.add(row2);
 
+        JLabel hint = new JLabel("<html>Set <b>Assigned</b> after assigning a team, then <b>Completed</b> when resolved. "
+                + "Reporter and admins receive alerts on each change.</html>");
+        JPanel north = new JPanel(new BorderLayout());
+        north.add(hint, BorderLayout.NORTH);
+
+        wrap.add(north, BorderLayout.NORTH);
         wrap.add(new JScrollPane(maintenanceTable), BorderLayout.CENTER);
         wrap.add(south, BorderLayout.SOUTH);
         return wrap;
@@ -334,7 +421,7 @@ public class AdminDashboardPanel extends JPanel {
         }
         long id = Long.parseLong(String.valueOf(bookingsModel.getValueAt(row, 0)));
         try {
-            campus.setBookingStatus(id, target);
+            new SetBookingStatusCommand(campus, id, target).execute();
             refreshBookings();
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, ex.getMessage(), "Bookings", JOptionPane.ERROR_MESSAGE);
@@ -383,7 +470,7 @@ public class AdminDashboardPanel extends JPanel {
         roomsModel.setRowCount(0);
         for (Room r : campus.getRooms()) {
             roomsModel.addRow(new Object[]{r.getId(), r.getName(), r.getBuilding(),
-                    r.getCapacity(), r.getEquipmentSummary()});
+                    r.getCapacity(), r.getEquipmentSummary(), r.isActive() ? "Yes" : "No"});
         }
     }
 
@@ -399,10 +486,14 @@ public class AdminDashboardPanel extends JPanel {
         List<MaintenanceRequest> list = new ArrayList<>(campus.getMaintenanceRequests());
         list.sort(Comparator.comparing(MaintenanceRequest::getCreatedAt).reversed());
         for (MaintenanceRequest m : list) {
+            String roomLabel = campus.findRoom(m.getRoomId()).map(Room::getName).orElse(m.getRoomId());
             maintenanceModel.addRow(new Object[]{
                     m.getId(),
+                    roomLabel,
                     m.getTitle(),
+                    m.getUrgency().getLabel(),
                     m.getReportedByUsername(),
+                    m.getAssignedTo().isEmpty() ? "—" : m.getAssignedTo(),
                     m.getStatus().getLabel(),
                     DT.format(m.getCreatedAt())
             });

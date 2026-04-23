@@ -1,9 +1,9 @@
 package com.cardiffmet.scms.ui;
 
 import com.cardiffmet.scms.auth.UserDirectory;
+import com.cardiffmet.scms.facade.CampusServicesFacade;
 import com.cardiffmet.scms.model.Session;
 import com.cardiffmet.scms.model.UserRole;
-import com.cardiffmet.scms.service.CampusRepository;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
@@ -30,17 +30,15 @@ import java.awt.Insets;
  */
 public class LoginFrame extends JFrame {
 
-    private final CampusRepository campus;
-    private final UserDirectory users;
+    private final CampusServicesFacade services;
 
     private final JTextField usernameField = new JTextField(20);
     private final JPasswordField passwordField = new JPasswordField(20);
     private final JComboBox<UserRole> roleCombo = new JComboBox<>(UserRole.values());
 
-    public LoginFrame(CampusRepository campus, UserDirectory users) {
+    public LoginFrame(CampusServicesFacade services) {
         super("SCMS Login — Cardiff Metropolitan University");
-        this.campus = campus;
-        this.users = users;
+        this.services = services;
 
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setMinimumSize(new Dimension(440, 380));
@@ -124,6 +122,10 @@ public class LoginFrame extends JFrame {
         getRootPane().setDefaultButton(loginBtn);
     }
 
+    private UserDirectory users() {
+        return services.users();
+    }
+
     private void updateHint(JLabel hint) {
         UserRole role = (UserRole) roleCombo.getSelectedItem();
         hint.setText(role != null ? UserDirectory.loginHint(role) : " ");
@@ -140,7 +142,7 @@ public class LoginFrame extends JFrame {
         }
 
         char[] pass = passwordField.getPassword();
-        boolean ok = users.authenticate(usernameField.getText(), pass, role);
+        boolean ok = users().authenticate(usernameField.getText(), pass, role);
         if (!ok) {
             JOptionPane.showMessageDialog(this,
                     "Invalid username or password for the selected role.\n"
@@ -152,10 +154,10 @@ public class LoginFrame extends JFrame {
             return;
         }
 
-        users.resolveSession(usernameField.getText().trim()).ifPresentOrElse(info -> {
+        users().resolveSession(usernameField.getText().trim()).ifPresentOrElse(info -> {
             Session session = new Session(info.username(), info.displayName(), info.role());
-            MainFrame main = new MainFrame(campus, users, session, () -> {
-                LoginFrame next = new LoginFrame(campus, users);
+            MainFrame main = new MainFrame(services, session, () -> {
+                LoginFrame next = new LoginFrame(services);
                 next.setLocationRelativeTo(null);
                 next.setVisible(true);
             });

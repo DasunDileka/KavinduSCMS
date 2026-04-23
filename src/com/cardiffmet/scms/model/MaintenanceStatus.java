@@ -1,9 +1,12 @@
 package com.cardiffmet.scms.model;
 
+/**
+ * Maintenance workflow: Pending → Assigned → Completed.
+ */
 public enum MaintenanceStatus {
-    OPEN("Open"),
-    IN_PROGRESS("In progress"),
-    RESOLVED("Resolved");
+    PENDING("Pending"),
+    ASSIGNED("Assigned"),
+    COMPLETED("Completed");
 
     private final String label;
 
